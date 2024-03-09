@@ -16,8 +16,8 @@ pub struct DatabaseOptions {
 impl Default for DatabaseOptions {
     fn default() -> Self {
         Self {
-            normal_name: "harmony",
-            crypto_name: "cryptocurrency",
+            normal_name: "harmony.db",
+            crypto_name: "cryptocurrency.db",
         }
     }
 }

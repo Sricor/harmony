@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS CryptocurrencyPrice
     serial      INTEGER PRIMARY KEY NOT NULL,
     symbol      TEXT                NOT NULL,
     price       TEXT                NOT NULL,
-    timestamp   INTEGER             NOT NULL,
+    timestamp   INTEGER             NOT NULL
 )";
 
 pub fn sqlite_table_inventory_cryptocurrency() -> Vec<&'static str> {

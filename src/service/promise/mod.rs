@@ -29,8 +29,13 @@ pub trait Process {
 
 #[derive(Debug)]
 pub enum ProcessError {
+    // Process running error
     Pursue(String),
+
+    // Person config error
     Person(String),
+
+    // Database error
     Database(String),
 }
 

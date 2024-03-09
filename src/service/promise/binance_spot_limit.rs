@@ -6,8 +6,8 @@ use rust_binance::strategy::limit::{Limit, LimitPosition};
 use rust_binance::strategy::{Exchanger, Range, Strategy};
 
 use crate::database::collection::{
-    BinanceSecretInterface, BinanceSpotInterface, PromiseBinanceSpotLimit,
-    PromiseBinanceSpotLimitInterface,
+    BinanceSecret, BinanceSecretInterface, BinanceSpot, BinanceSpotInterface,
+    PromiseBinanceSpotLimit, PromiseBinanceSpotLimitInterface,
 };
 
 use super::*;
@@ -28,15 +28,19 @@ impl Process for PromiseBinanceSpotLimit {
                         .await
                         .unwrap();
 
-                    // database
-                    //     .promise
-                    //     .update_running_by_identifier_and_owner(
-                    //         &item.promise,
-                    //         &item.owner,
-                    //         &crate::database::collection::PromiseRunning::Stopped,
-                    //     )
-                    //     .await
-                    //     .unwrap();
+                    if let ProcessError::Person(_) = e {
+                        database
+                            .promise
+                            .update_running_by_identifier_and_owner(
+                                &item.promise,
+                                &item.owner,
+                                &crate::database::collection::PromiseRunning::Stopped,
+                            )
+                            .await
+                            .unwrap();
+
+                        panic!()
+                    }
                 }
             };
 
@@ -53,35 +57,21 @@ async fn process(state: &State, item: &PromiseBinanceSpotLimit) -> ProcessResult
     let promise_id = item.promise.clone();
     let symbol = item.symbol.clone();
 
-    let secret = database
-        .binance_secret
-        .select_one_spot_by_owner(&owner)
-        .await?;
-    let secret = match secret {
-        Some(v) => v,
-        None => return Err(ProcessError::Person(String::from("Secret not found"))),
-    };
+    let secret = select_binance_secret_from_database(database, &owner).await?;
+    let spot = select_binance_spot_from_database(database, &owner, &symbol).await?;
 
-    let spot = database
-        .binance_spot
-        .select_one_by_owner_and_symbol(&owner, &symbol)
-        .await?;
-    let spot = match spot {
-        Some(v) => v,
-        None => return Err(ProcessError::Person(String::from("Spot not found"))),
-    };
-
-    let investment = to_decimal(&item.investment)?;
-    let buying = Range(
-        to_decimal(&item.buying_low)?,
-        to_decimal(&item.buying_high)?,
+    let positions = LimitPosition::new(
+        to_decimal(&item.investment)?,
+        Range(
+            to_decimal(&item.buying_low)?,
+            to_decimal(&item.buying_high)?,
+        ),
+        Range(
+            to_decimal(&item.selling_low)?,
+            to_decimal(&item.selling_high)?,
+        ),
+        Some(to_decimal(&item.position)?),
     );
-    let selling = Range(
-        to_decimal(&item.selling_low)?,
-        to_decimal(&item.selling_high)?,
-    );
-    let position = to_decimal(&item.position)?;
-    let positions = LimitPosition::new(investment, buying, selling, Some(position));
 
     let client = SpotClient::new(
         secret.api_key,
@@ -99,20 +89,17 @@ async fn process(state: &State, item: &PromiseBinanceSpotLimit) -> ProcessResult
     let limit = Limit::with_positions(vec![positions]);
 
     match limit.trap(&price, &buy, &sell).await {
-        Ok(_v) => {}
         Err(e) => return Err(ProcessError::Pursue(e.to_string())),
+        Ok(_v) => {}
     }
 
     let position = limit.positions().get(0).unwrap();
-    let item = PromiseBinanceSpotLimit::with_limit_position(
-        promise_id.clone(),
-        owner.clone(),
-        symbol,
-        position,
-    );
+
     database
         .promise_binance_spot_limit
-        .replace_by_promise(&item)
+        .replace_by_promise(&PromiseBinanceSpotLimit::with_limit_position(
+            promise_id, owner, symbol, position,
+        ))
         .await?;
 
     Ok(())
@@ -122,6 +109,35 @@ fn to_decimal(value: &String) -> ProcessResult<Decimal> {
     match Decimal::from_str(&value) {
         Ok(v) => Ok(v),
         Err(e) => Err(ProcessError::Database(e.to_string())),
+    }
+}
+
+async fn select_binance_secret_from_database(
+    database: &Database,
+    owner: &PersonIdentifier,
+) -> ProcessResult<BinanceSecret> {
+    let secret = database
+        .binance_secret
+        .select_one_spot_by_owner(&owner)
+        .await?;
+    match secret {
+        Some(v) => Ok(v),
+        None => return Err(ProcessError::Person(String::from("Secret not found"))),
+    }
+}
+
+async fn select_binance_spot_from_database(
+    database: &Database,
+    owner: &PersonIdentifier,
+    symbol: &String,
+) -> ProcessResult<BinanceSpot> {
+    let spot = database
+        .binance_spot
+        .select_one_by_owner_and_symbol(&owner, &symbol)
+        .await?;
+    match spot {
+        Some(v) => Ok(v),
+        None => return Err(ProcessError::Person(String::from("Spot not found"))),
     }
 }
 

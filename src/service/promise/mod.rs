@@ -1,4 +1,5 @@
 pub mod binance_spot_limit;
+// pub mod permanent;
 
 use std::error::Error;
 use std::fmt::Display;
@@ -17,6 +18,10 @@ use crate::database::{Database, RecorderResult, Uniquer};
 
 type PinFuture<T> = Pin<Box<dyn Future<Output = T> + Send + Sync>>;
 type PromiseProcess<T> = Box<dyn Fn() -> PinFuture<T> + Send + Sync>;
+
+pub trait Scheduling {
+    fn make(self, process: PromiseProcess<()>) -> Arc<Task>;
+}
 
 pub trait Process {
     fn create(self, state: Arc<State>) -> PromiseProcess<()>;
@@ -44,8 +49,8 @@ impl Display for ProcessError {
 
 pub type ProcessResult<T> = Result<T, ProcessError>;
 
-impl Promise {
-    pub fn make(self, process: PromiseProcess<()>) -> Arc<Task> {
+impl Scheduling for Promise {
+    fn make(self, process: PromiseProcess<()>) -> Arc<Task> {
         let data = TaskBuilder::default()
             .set_identifier(self.identifier)
             .set_interval(Duration::from_secs(self.interval))

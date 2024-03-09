@@ -6,7 +6,7 @@ use harmony::{api, database, service};
 
 #[tokio::main]
 async fn main() {
-    let database = database::Database::new("harmony.db").await;
+    let database = database::Database::new(None);
     let secret = api::Secret::with_str("harmony");
 
     let state = Arc::new(api::State::new(database, secret));

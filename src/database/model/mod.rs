@@ -3,13 +3,14 @@ pub mod cyptocurrency;
 pub mod person;
 pub mod promise;
 
+use std::future::Future;
+
 use rusqlite::params;
 use rusqlite::{
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
     Row, ToSql,
 };
 use serde::{Deserialize, Serialize};
-use std::future::Future;
 
 pub use self::person::PersonIdentifier;
 
@@ -91,16 +92,6 @@ CREATE TABLE IF NOT EXISTS PromiseBinanceSpotLimit
     FOREIGN KEY(promise)  REFERENCES Promise(identifier) ON DELETE CASCADE ON UPDATE CASCADE
 )";
 
-// ===== Cryptocurrency
-const SQLITE_TABLE_CRYPTOCURRENCY_PRICE: &str = "
-CREATE TABLE IF NOT EXISTS CryptocurrencyPrice
-(
-    serial      INTEGER PRIMARY KEY NOT NULL,
-    symbol      TEXT                NOT NULL,
-    price       TEXT                NOT NULL,
-    timestamp   INTEGER             NOT NULL,
-)";
-
 // ===== Binance =====
 const SQLITE_TABLE_BINANCE_SECRET: &str = "
 CREATE TABLE IF NOT EXISTS BinanceSecret
@@ -156,16 +147,29 @@ CREATE TABLE IF NOT EXISTS BinanceSpotSellingOrder
     FOREIGN KEY(owner) REFERENCES Person(identifier) ON DELETE CASCADE ON UPDATE CASCADE
 )";
 
-pub fn sqlite_table_inventory() -> Vec<&'static str> {
+pub fn sqlite_table_normal() -> Vec<&'static str> {
     vec![
         SQLITE_TABLE_PERSON,
         SQLITE_TABLE_PROMISE,
         SQLITE_TABLE_PROMISE_LOGGING,
         SQLITE_TABLE_PROMISE_BINANCE_SPOT_LIMIT,
-        SQLITE_TABLE_CRYPTOCURRENCY_PRICE,
         SQLITE_TABLE_BINANCE_SECRET,
         SQLITE_TABLE_BINANCE_SPOT,
         SQLITE_TABLE_BINANCE_SPOT_BUYING_ORDER,
         SQLITE_TABLE_BINANCE_SPOT_SELLING_ORDER,
     ]
+}
+
+// ===== Cryptocurrency =====
+const SQLITE_TABLE_CRYPTOCURRENCY_PRICE: &str = "
+CREATE TABLE IF NOT EXISTS CryptocurrencyPrice
+(
+    serial      INTEGER PRIMARY KEY NOT NULL,
+    symbol      TEXT                NOT NULL,
+    price       TEXT                NOT NULL,
+    timestamp   INTEGER             NOT NULL,
+)";
+
+pub fn sqlite_table_inventory_cryptocurrency() -> Vec<&'static str> {
+    vec![SQLITE_TABLE_CRYPTOCURRENCY_PRICE]
 }

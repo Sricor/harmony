@@ -1,7 +1,7 @@
 use super::*;
 
 pub mod post {
-    use crate::service::promise::Process;
+    use crate::service::promise::{Process, Scheduling};
 
     use self::database::{
         collection::{

@@ -34,6 +34,12 @@ pub mod collection {
         Interface as PromiseBinanceSpotLimitInterface
     };
 
+    // ===== Cryptocurrency =====
+    pub use model::cyptocurrency::price::{
+        Item      as CyptocurrencyPrice,
+        Interface as CyptocurrencyPriceInterface
+    };
+
     // ===== Binance =====
     pub use model::binance::secret::{
         BinanceSecretPurview,

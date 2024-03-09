@@ -39,4 +39,9 @@ impl State {
     pub fn delay(&self) -> &Delay {
         &self.delay
     }
+
+    pub fn timestamp_millis() -> i64 {
+        use chrono::Utc;
+        Utc::now().timestamp_millis()
+    }
 }

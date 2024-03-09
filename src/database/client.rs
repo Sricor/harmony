@@ -8,6 +8,20 @@ use rusqlite::{Connection, Error as RusqliteError};
 
 use super::{collection::*, model};
 
+pub struct DatabaseOptions {
+    normal_name: &'static str,
+    crypto_name: &'static str,
+}
+
+impl Default for DatabaseOptions {
+    fn default() -> Self {
+        Self {
+            normal_name: "harmony",
+            crypto_name: "cryptocurrency",
+        }
+    }
+}
+
 pub struct Database {
     pub person: Recorder<Person>,
     pub binance_secret: Recorder<BinanceSecret>,
@@ -17,31 +31,48 @@ pub struct Database {
     pub promise: Recorder<Promise>,
     pub promise_logging: Recorder<PromiseLogging>,
     pub promise_binance_spot_limit: Recorder<PromiseBinanceSpotLimit>,
+
+    pub cryptocurrency: Recorder<CyptocurrencyPrice>,
 }
 
 impl Database {
-    pub async fn new(url: &str) -> Self {
-        let conn = Connection::open(url).unwrap();
-        let conn: Arc<Mutex<Connection>> = Arc::new(Mutex::new(conn));
-        Self::create_sqlite_table(&conn).await;
+    pub fn new(options: Option<DatabaseOptions>) -> Self {
+        let options = options.unwrap_or_default();
+        let normal = Self::create_sqlite_normal(&options.normal_name);
+        let crypto = Self::create_sqlite_cryptocurrency(&options.crypto_name);
 
         Self {
-            person: Recorder::with_sqlite(conn.clone()),
-            binance_secret: Recorder::with_sqlite(conn.clone()),
-            binance_spot: Recorder::with_sqlite(conn.clone()),
-            binance_spot_buying_order: Recorder::with_sqlite(conn.clone()),
-            binance_spot_selling_order: Recorder::with_sqlite(conn.clone()),
-            promise: Recorder::with_sqlite(conn.clone()),
-            promise_logging: Recorder::with_sqlite(conn.clone()),
-            promise_binance_spot_limit: Recorder::with_sqlite(conn.clone()),
+            person: Recorder::with_sqlite(normal.clone()),
+            binance_secret: Recorder::with_sqlite(normal.clone()),
+            binance_spot: Recorder::with_sqlite(normal.clone()),
+            binance_spot_buying_order: Recorder::with_sqlite(normal.clone()),
+            binance_spot_selling_order: Recorder::with_sqlite(normal.clone()),
+            promise: Recorder::with_sqlite(normal.clone()),
+            promise_logging: Recorder::with_sqlite(normal.clone()),
+            promise_binance_spot_limit: Recorder::with_sqlite(normal.clone()),
+
+            cryptocurrency: Recorder::with_sqlite(crypto.clone()),
         }
     }
 
-    async fn create_sqlite_table(conn: &Mutex<Connection>) {
-        let conn = conn.lock().unwrap();
-        model::sqlite_table_inventory().iter().for_each(|e| {
+    fn create_sqlite_normal(url: &str) -> Arc<Mutex<Connection>> {
+        let conn = Connection::open(url).unwrap();
+        model::sqlite_table_normal().iter().for_each(|e| {
             conn.execute(e, ()).unwrap();
         });
+
+        Arc::new(Mutex::new(conn))
+    }
+
+    fn create_sqlite_cryptocurrency(url: &str) -> Arc<Mutex<Connection>> {
+        let conn = Connection::open(url).unwrap();
+        model::sqlite_table_inventory_cryptocurrency()
+            .iter()
+            .for_each(|e| {
+                conn.execute(e, ()).unwrap();
+            });
+
+        Arc::new(Mutex::new(conn))
     }
 }
 

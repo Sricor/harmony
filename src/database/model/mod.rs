@@ -1,4 +1,5 @@
 pub mod binance;
+pub mod cyptocurrency;
 pub mod person;
 pub mod promise;
 
@@ -90,6 +91,16 @@ CREATE TABLE IF NOT EXISTS PromiseBinanceSpotLimit
     FOREIGN KEY(promise)  REFERENCES Promise(identifier) ON DELETE CASCADE ON UPDATE CASCADE
 )";
 
+// ===== Cryptocurrency
+const SQLITE_TABLE_CRYPTOCURRENCY_PRICE: &str = "
+CREATE TABLE IF NOT EXISTS CryptocurrencyPrice
+(
+    serial      INTEGER PRIMARY KEY NOT NULL,
+    symbol      TEXT                NOT NULL,
+    price       TEXT                NOT NULL,
+    timestamp   INTEGER             NOT NULL,
+)";
+
 // ===== Binance =====
 const SQLITE_TABLE_BINANCE_SECRET: &str = "
 CREATE TABLE IF NOT EXISTS BinanceSecret
@@ -151,6 +162,7 @@ pub fn sqlite_table_inventory() -> Vec<&'static str> {
         SQLITE_TABLE_PROMISE,
         SQLITE_TABLE_PROMISE_LOGGING,
         SQLITE_TABLE_PROMISE_BINANCE_SPOT_LIMIT,
+        SQLITE_TABLE_CRYPTOCURRENCY_PRICE,
         SQLITE_TABLE_BINANCE_SECRET,
         SQLITE_TABLE_BINANCE_SPOT,
         SQLITE_TABLE_BINANCE_SPOT_BUYING_ORDER,

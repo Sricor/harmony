@@ -7,28 +7,54 @@ use std::time::Duration;
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use delay::task::{Task, TaskBuilder};
+use serde::{Deserialize, Serialize};
 
 use crate::api::State;
 use crate::database::collection::{
-    PersonIdentifier, Promise, PromiseBinanceSpotLimitInterface, PromiseCategory,
-    PromiseIdentifier, PromiseInterface, PromiseLogging, PromiseLoggingInterface, PromiseRunning,
+    PersonIdentifier, Promise, PromiseIdentifier, PromiseInterface, PromiseProcessBinanceSpotLimit,
+    PromiseProcessCategory, PromiseProcessStatus,
 };
 use crate::database::error::RecorderError;
-use crate::database::{Database, RecorderResult, Uniquer};
 
 type PinFuture<T> = Pin<Box<dyn Future<Output = T> + Send + Sync>>;
-type PromiseProcess<T> = Box<dyn Fn() -> PinFuture<T> + Send + Sync>;
+type ClosureFuture<T> = Box<dyn Fn() -> PinFuture<T> + Send + Sync>;
 
 pub trait Scheduling {
-    fn make(self, process: PromiseProcess<()>) -> Arc<Task>;
+    fn make<T>(self, state: Arc<State>) -> SchedulingResult<Arc<Task>>
+    where
+        T: Process + Serialize + for<'a> Deserialize<'a>;
+}
+
+impl Scheduling for Promise {
+    fn make<T>(self, state: Arc<State>) -> SchedulingResult<Arc<Task>>
+    where
+        T: Process + Serialize + for<'a> Deserialize<'a>,
+    {
+        let process = self.process::<T>()?;
+
+        let result = TaskBuilder::default()
+            .set_identifier(self.identifier.clone())
+            .set_interval(Duration::from_secs(self.interval))
+            .set_timeout(Duration::from_secs(self.timeout))
+            .set_max_concurrent(self.max_concurrent)
+            .set_process(process.create(state, self.owner, self.identifier))
+            .build();
+
+        Ok(Arc::new(result))
+    }
 }
 
 pub trait Process {
-    fn create(self, state: Arc<State>) -> PromiseProcess<()>;
+    fn create(
+        self,
+        state: Arc<State>,
+        owner: PersonIdentifier,
+        promise: PromiseIdentifier,
+    ) -> ClosureFuture<()>;
 }
 
 #[derive(Debug)]
-pub enum ProcessError {
+pub enum SchedulingError {
     // Process running error
     Pursue(String),
 
@@ -39,8 +65,8 @@ pub enum ProcessError {
     Database(String),
 }
 
-impl Error for ProcessError {}
-impl Display for ProcessError {
+impl Error for SchedulingError {}
+impl Display for SchedulingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
             Self::Pursue(e) => e,
@@ -52,73 +78,31 @@ impl Display for ProcessError {
     }
 }
 
-pub type ProcessResult<T> = Result<T, ProcessError>;
-
-impl Scheduling for Promise {
-    fn make(self, process: PromiseProcess<()>) -> Arc<Task> {
-        let data = TaskBuilder::default()
-            .set_identifier(self.identifier)
-            .set_interval(Duration::from_secs(self.interval))
-            .set_timeout(Duration::from_secs(self.timeout))
-            .set_max_concurrent(self.max_concurrent)
-            .set_process(process)
-            .build();
-
-        Arc::new(data)
-    }
-}
-
-// async fn insert_info(
-//     database: &Database,
-//     promise: PromiseIdentifier,
-//     owner: PersonIdentifier,
-//     message: String,
-// ) -> RecorderResult<()> {
-//     let item = PromiseLogging::with_info(promise, owner, message);
-
-//     database.promise_logging.insert(&item).await
-// }
-
-async fn insert_error(
-    database: &Database,
-    promise: PromiseIdentifier,
-    owner: PersonIdentifier,
-    message: String,
-) -> RecorderResult<()> {
-    let item = PromiseLogging::with_error(promise, owner, message);
-
-    database.promise_logging.insert(&item).await
-}
-
-impl From<RecorderError> for ProcessError {
+impl From<RecorderError> for SchedulingError {
     fn from(err: RecorderError) -> Self {
         Self::Database(err.to_string())
     }
 }
 
-pub async fn inital_service_promise(state: Arc<State>) {
+type SchedulingResult<T> = Result<T, SchedulingError>;
+
+pub async fn initial_service_promise(state: Arc<State>) {
     let database = state.database();
     let delay = state.delay();
 
     let promises = database
         .promise
-        .select_all_by_running(&PromiseRunning::Running)
+        .select_all_by_status(&PromiseProcessStatus::Running)
         .await
         .unwrap();
 
     for p in promises.into_iter() {
         let task = match p.category {
-            PromiseCategory::BinanceSpotLimit => {
-                let item = database
-                    .promise_binance_spot_limit
-                    .select_one_by_promise(p.identifier())
-                    .await
-                    .unwrap()
-                    .unwrap();
-                p.make(item.create(state.clone()))
+            PromiseProcessCategory::BinanceSpotLimit => {
+                p.make::<PromiseProcessBinanceSpotLimit>(state.clone())
             }
         };
 
-        delay.insert(task).await.unwrap();
+        delay.insert(task.unwrap()).await.unwrap();
     }
 }

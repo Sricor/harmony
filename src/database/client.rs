@@ -5,6 +5,7 @@ use std::{
 };
 
 use rusqlite::{Connection, Error as RusqliteError};
+use serde_json::error::Error as SerdeJsonError;
 
 use super::{collection::*, model};
 
@@ -30,7 +31,6 @@ pub struct Database {
     pub binance_spot_selling_order: Recorder<BinanceSpotSellingOrder>,
     pub promise: Recorder<Promise>,
     pub promise_logging: Recorder<PromiseLogging>,
-    pub promise_binance_spot_limit: Recorder<PromiseBinanceSpotLimit>,
 
     pub cryptocurrency: Recorder<CyptocurrencyPrice>,
 }
@@ -49,7 +49,6 @@ impl Database {
             binance_spot_selling_order: Recorder::with_sqlite(normal.clone()),
             promise: Recorder::with_sqlite(normal.clone()),
             promise_logging: Recorder::with_sqlite(normal.clone()),
-            promise_binance_spot_limit: Recorder::with_sqlite(normal.clone()),
 
             cryptocurrency: Recorder::with_sqlite(crypto.clone()),
         }
@@ -97,6 +96,7 @@ impl<T> Sqlite for Recorder<T> {
 pub enum RecorderError {
     Sqlite(String),
     Mutex(String),
+    Serde(String),
 }
 
 impl Error for RecorderError {}
@@ -106,6 +106,7 @@ impl Display for RecorderError {
         let message = match self {
             Self::Sqlite(e) => e,
             Self::Mutex(e) => e,
+            Self::Serde(e) => e,
         };
 
         write!(f, "{}", message)
@@ -121,6 +122,12 @@ impl From<RusqliteError> for RecorderError {
 impl<T> From<PoisonError<T>> for RecorderError {
     fn from(value: PoisonError<T>) -> Self {
         Self::Mutex(value.to_string())
+    }
+}
+
+impl From<SerdeJsonError> for RecorderError {
+    fn from(value: SerdeJsonError) -> Self {
+        Self::Serde(value.to_string())
     }
 }
 

@@ -16,7 +16,7 @@ pub use self::http::claim::Secret;
 pub use self::http::general::State;
 
 // ===== Public API =====
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 
 mod general;
@@ -53,6 +53,7 @@ pub fn router_binance(state: AppState) -> Router {
         .route("/spot/order", get(binance::spot::order::get::request))
         .route("/spot/limit", get(binance::spot::limit::get::request))
         .route("/spot/limit", post(binance::spot::limit::post::request))
+        .route("/spot/limit", delete(binance::spot::limit::delete::request))
         .route("/spot/predict", post(binance::spot::predict::post::request))
         .with_state(state)
 }

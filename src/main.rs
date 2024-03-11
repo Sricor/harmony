@@ -6,12 +6,14 @@ use harmony::{api, database, service};
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
+
     let database = database::Database::new(None);
     let secret = api::Secret::with_str("harmony");
 
     let state = Arc::new(api::State::new(database, secret));
 
-    service::promise::inital_service_promise(state.clone()).await;
+    service::promise::initial_service_promise(state.clone()).await;
 
     let app = Router::new()
         .nest("/", api::router_general(state.clone()))

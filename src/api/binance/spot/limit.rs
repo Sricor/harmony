@@ -1,27 +1,34 @@
 use super::*;
 
 pub mod post {
-    use crate::service::promise::{Process, Scheduling};
-
-    use self::database::{
-        collection::{
-            Promise, PromiseBinanceSpotLimit, PromiseBinanceSpotLimitInterface, PromiseIdentifier,
-            PromiseInterface, PromiseRunning,
-        },
-        Uniquer,
+    use rust_binance::strategy::{
+        limit::{Limit, LimitPosition},
+        Range,
     };
 
+    use crate::service::promise::Scheduling;
+
     use super::*;
+
+    use self::database::collection::{
+        Promise, PromiseIdentifier, PromiseInterface, PromiseProcessBinanceSpotLimit,
+        PromiseProcessStatus,
+    };
+
     #[derive(Debug, Clone, Deserialize)]
-    pub struct RequestPayload {
-        interval: u64,
-        symbol: String,
+    pub struct Position {
         buying_low: Price,
         buying_high: Price,
         selling_low: Price,
         selling_high: Price,
         investment: Amount,
         position: Quantity,
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct RequestPayload {
+        symbol: String,
+        positions: Vec<Position>,
     }
 
     pub type ResponseBody = PromiseIdentifier;
@@ -36,24 +43,32 @@ pub mod post {
         let owner = claim.subject().clone();
         let database = state.database();
 
-        let mut promise = Promise::with_binance_spot_limit(owner.clone(), payload.interval);
-        let process = PromiseBinanceSpotLimit {
+        let mut positions = Vec::with_capacity(payload.positions.len());
+        for p in payload.positions.into_iter() {
+            let item = LimitPosition::new(
+                p.investment,
+                Range(p.buying_low, p.buying_high),
+                Range(p.selling_low, p.selling_high),
+                Some(p.position),
+            );
+
+            positions.push(item)
+        }
+
+        let mut promise = Promise::with_process_binance_spot_limit(
             owner,
-            symbol: payload.symbol,
-            promise: promise.identifier().clone(),
-            buying_low: payload.buying_low.to_string(),
-            buying_high: payload.buying_high.to_string(),
-            selling_low: payload.selling_low.to_string(),
-            selling_high: payload.selling_high.to_string(),
-            investment: payload.investment.to_string(),
-            position: payload.position.to_string(),
-        };
+            &PromiseProcessBinanceSpotLimit {
+                symbol: payload.symbol,
+                limit: Limit::with_positions(positions),
+            },
+        )?;
+        promise.status = PromiseProcessStatus::Running;
 
-        promise.running = PromiseRunning::Running;
         database.promise.insert(&promise).await?;
-        database.promise_binance_spot_limit.insert(&process).await?;
 
-        let task = promise.make(process.create(state.clone()));
+        let task = promise
+            .make::<PromiseProcessBinanceSpotLimit>(state.clone())
+            .unwrap();
 
         match state.delay().insert(task).await {
             Ok(v) => Ok(Response::ok(v)),
@@ -68,8 +83,8 @@ pub mod post {
 pub mod get {
     use self::database::{
         collection::{
-            Promise, PromiseBinanceSpotLimit, PromiseBinanceSpotLimitInterface, PromiseCategory,
-            PromiseIdentifier, PromiseInterface, PromiseLogging, PromiseLoggingInterface,
+            Promise, PromiseIdentifier, PromiseInterface, PromiseLogging, PromiseLoggingInterface,
+            PromiseProcessCategory,
         },
         Uniquer,
     };
@@ -84,7 +99,6 @@ pub mod get {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ResponseBody {
         promise: Promise,
-        limit: PromiseBinanceSpotLimit,
         logging: Vec<PromiseLogging>,
     }
 
@@ -99,7 +113,7 @@ pub mod get {
 
         let promises = database
             .promise
-            .select_all_by_owner_category(&owner, &PromiseCategory::BinanceSpotLimit)
+            .select_all_by_owner_category(&owner, &PromiseProcessCategory::BinanceSpotLimit)
             .await?;
 
         if promises.is_empty() {
@@ -107,24 +121,14 @@ pub mod get {
         }
 
         let mut result = Vec::with_capacity(promises.len());
-        for p in promises.into_iter() {
-            let promise_item = database
-                .promise_binance_spot_limit
-                .select_one_by_promise_and_owner(p.identifier(), &owner)
-                .await?;
-            let promise_item = match promise_item {
-                Some(v) => v,
-                None => return Err(Response::incompatible(String::from("Something error"))),
-            };
-
+        for promise in promises.into_iter() {
             let promise_logging = database
                 .promise_logging
-                .select_all_by_promise_and_owner(p.identifier(), &owner)
+                .select_all_by_promise_and_owner(promise.identifier(), &owner)
                 .await?;
 
             result.push(ResponseBody {
-                promise: p,
-                limit: promise_item,
+                promise,
                 logging: promise_logging,
             })
         }
@@ -137,7 +141,9 @@ pub mod get {
 
 pub mod delete {
     use self::database::{
-        collection::{PromiseIdentifier, PromiseInterface, PromiseRunning},
+        collection::{
+            PromiseIdentifier, PromiseInterface, PromiseProcessCategory, PromiseProcessStatus,
+        },
         Uniquer,
     };
 
@@ -164,7 +170,11 @@ pub mod delete {
 
         let promise = database
             .promise
-            .select_one_by_identifier_and_owner(&payload.identifier, &owner)
+            .select_one_by_identifier_owner_category(
+                &payload.identifier,
+                &owner,
+                &PromiseProcessCategory::BinanceSpotLimit,
+            )
             .await?;
 
         let promise = match promise {
@@ -173,15 +183,11 @@ pub mod delete {
         };
 
         let promise_identifier = promise.identifier();
-
         let _ = delay.remove(&promise_identifier).await;
+
         database
             .promise
-            .update_running_by_identifier_and_owner(
-                &promise_identifier,
-                &owner,
-                &PromiseRunning::Stopped,
-            )
+            .update_status_by_identifier(&PromiseProcessStatus::Stopped, &promise_identifier)
             .await?;
 
         let response = Response::ok(ResponseBody());

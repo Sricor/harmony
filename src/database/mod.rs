@@ -18,8 +18,9 @@ pub mod collection {
 
     pub use model::promise::{
         PromiseIdentifier,
-        PromiseCategory,
-        PromiseRunning,
+        PromiseProcessCategory,
+        PromiseProcessStatus,
+        process::PromiseProcessBinanceSpotLimit,
         Item      as Promise,
         Interface as PromiseInterface
     };
@@ -27,11 +28,6 @@ pub mod collection {
     pub use model::promise::logging::{
         Item      as PromiseLogging,
         Interface as PromiseLoggingInterface
-    };
-
-    pub use model::promise::binance_spot_limit::{
-        Item      as PromiseBinanceSpotLimit,
-        Interface as PromiseBinanceSpotLimitInterface
     };
 
     // ===== Cryptocurrency =====

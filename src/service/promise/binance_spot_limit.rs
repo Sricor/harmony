@@ -1,46 +1,64 @@
-use std::str::FromStr;
+use rust_binance::{
+    spot::client::{SpotClient, SpotClientOption},
+    strategy::{Exchanger, Strategy},
+};
 
-use rust_binance::noun::Decimal;
-use rust_binance::spot::client::{SpotClient, SpotClientOption};
-use rust_binance::strategy::limit::{Limit, LimitPosition};
-use rust_binance::strategy::{Exchanger, Range, Strategy};
-
-use crate::database::collection::{
-    BinanceSecret, BinanceSecretInterface, BinanceSpot, BinanceSpotInterface,
-    PromiseBinanceSpotLimit, PromiseBinanceSpotLimitInterface,
+use crate::database::{
+    collection::{
+        BinanceSecret, BinanceSpot, PersonIdentifier, PromiseLogging, PromiseLoggingInterface,
+        PromiseProcessBinanceSpotLimit,
+    },
+    Database,
 };
 
 use super::*;
 
-impl Process for PromiseBinanceSpotLimit {
-    fn create(self, state: Arc<State>) -> PromiseProcess<()> {
+impl Process for PromiseProcessBinanceSpotLimit {
+    fn create(
+        self,
+        state: Arc<State>,
+        owner: PersonIdentifier,
+        promise: PromiseIdentifier,
+    ) -> ClosureFuture<()> {
         let item = Arc::new(self);
         let result = move || -> PinFuture<()> {
             let state = state.clone();
             let item = item.clone();
+            let promise = promise.clone();
+            let owner = owner.clone();
             let process = async move {
-                if let Err(e) = process(&state, &item).await {
-                    let database = state.database();
-                    let promise_id = item.promise.clone();
-                    let promise_owner = item.owner.clone();
+                let database = state.database();
+                let result = process(&state, &owner, &promise, &item).await;
 
-                    insert_error(database, promise_id, promise_owner, e.to_string())
-                        .await
-                        .unwrap();
+                database
+                    .promise
+                    .update_one_total_runs_by_identifier(&promise)
+                    .await
+                    .unwrap();
 
-                    if let ProcessError::Person(_) = e {
+                database
+                    .promise
+                    .update_process_by_identifier_category(
+                        &Promise::serde_process(&*item).unwrap(),
+                        &promise,
+                        &PromiseProcessCategory::BinanceSpotLimit,
+                    )
+                    .await
+                    .unwrap();
+
+                if let Err(e) = result {
+                    if let SchedulingError::Person(_) = &e {
+                        state.delay().remove(&promise).await.unwrap();
                         database
                             .promise
-                            .update_running_by_identifier_and_owner(
-                                &item.promise,
-                                &item.owner,
-                                &crate::database::collection::PromiseRunning::Stopped,
-                            )
+                            .update_status_by_identifier(&PromiseProcessStatus::Stopped, &promise)
                             .await
                             .unwrap();
-
-                        panic!()
                     }
+
+                    let logging = PromiseLogging::with_error(promise, owner.clone(), e.to_string());
+
+                    database.promise_logging.insert(&logging).await.unwrap();
                 }
             };
 
@@ -51,27 +69,17 @@ impl Process for PromiseBinanceSpotLimit {
     }
 }
 
-async fn process(state: &State, item: &PromiseBinanceSpotLimit) -> ProcessResult<()> {
+async fn process(
+    state: &State,
+    owner: &PersonIdentifier,
+    _promise: &PromiseIdentifier,
+    item: &PromiseProcessBinanceSpotLimit,
+) -> SchedulingResult<()> {
     let database = state.database();
-    let owner = item.owner.clone();
-    let promise_id = item.promise.clone();
-    let symbol = item.symbol.clone();
+    let symbol = &item.symbol;
 
     let secret = select_binance_secret_from_database(database, &owner).await?;
-    let spot = select_binance_spot_from_database(database, &owner, &symbol).await?;
-
-    let positions = LimitPosition::new(
-        to_decimal(&item.investment)?,
-        Range(
-            to_decimal(&item.buying_low)?,
-            to_decimal(&item.buying_high)?,
-        ),
-        Range(
-            to_decimal(&item.selling_low)?,
-            to_decimal(&item.selling_high)?,
-        ),
-        Some(to_decimal(&item.position)?),
-    );
+    let spot = select_binance_spot_from_database(database, &owner, symbol).await?;
 
     let client = SpotClient::new(
         secret.api_key,
@@ -83,46 +91,35 @@ async fn process(state: &State, item: &PromiseBinanceSpotLimit) -> ProcessResult
     );
     let client = Arc::new(client);
     let price = client.spawn_price();
-    let buy = client.spawn_buy();
     let sell = client.spawn_sell();
+    let buy = client.spawn_buy();
 
-    let limit = Limit::with_positions(vec![positions]);
-
-    match limit.trap(&price, &buy, &sell).await {
-        Err(e) => return Err(ProcessError::Pursue(e.to_string())),
-        Ok(_v) => {}
+    match item.limit.trap(&price, &buy, &sell).await {
+        Err(e) => return Err(SchedulingError::Pursue(e.to_string())),
+        Ok(_) => {}
     }
-
-    let position = limit.positions().get(0).unwrap();
-
-    database
-        .promise_binance_spot_limit
-        .replace_by_promise(&PromiseBinanceSpotLimit::with_limit_position(
-            promise_id, owner, symbol, position,
-        ))
-        .await?;
 
     Ok(())
-}
-
-fn to_decimal(value: &String) -> ProcessResult<Decimal> {
-    match Decimal::from_str(&value) {
-        Ok(v) => Ok(v),
-        Err(e) => Err(ProcessError::Database(e.to_string())),
-    }
 }
 
 async fn select_binance_secret_from_database(
     database: &Database,
     owner: &PersonIdentifier,
-) -> ProcessResult<BinanceSecret> {
+) -> SchedulingResult<BinanceSecret> {
+    use crate::database::collection::BinanceSecretInterface;
+
     let secret = database
         .binance_secret
         .select_one_spot_by_owner(&owner)
         .await?;
+
     match secret {
         Some(v) => Ok(v),
-        None => return Err(ProcessError::Person(String::from("Secret not found"))),
+        None => {
+            return Err(SchedulingError::Person(String::from(
+                "binance secret not found",
+            )))
+        }
     }
 }
 
@@ -130,42 +127,19 @@ async fn select_binance_spot_from_database(
     database: &Database,
     owner: &PersonIdentifier,
     symbol: &String,
-) -> ProcessResult<BinanceSpot> {
+) -> SchedulingResult<BinanceSpot> {
+    use crate::database::collection::BinanceSpotInterface;
     let spot = database
         .binance_spot
         .select_one_by_owner_and_symbol(&owner, &symbol)
         .await?;
+
     match spot {
         Some(v) => Ok(v),
-        None => return Err(ProcessError::Person(String::from("Spot not found"))),
-    }
-}
-
-impl PromiseBinanceSpotLimit {
-    fn with_limit_position(
-        promise_identifier: PromiseIdentifier,
-        owner: PersonIdentifier,
-        symbol: String,
-        value: &LimitPosition,
-    ) -> Self {
-        let position = {
-            let position_quantity = value.position.lock().unwrap();
-            match *position_quantity {
-                Some(v) => v,
-                None => Decimal::ZERO,
-            }
-        };
-
-        Self {
-            promise: promise_identifier,
-            owner,
-            symbol,
-            buying_low: value.buying.low().to_string(),
-            buying_high: value.buying.high().to_string(),
-            selling_low: value.selling.low().to_string(),
-            selling_high: value.selling.high().to_string(),
-            investment: value.investment.to_string(),
-            position: position.to_string(),
+        None => {
+            return Err(SchedulingError::Person(String::from(
+                "binance spot ot found",
+            )))
         }
     }
 }

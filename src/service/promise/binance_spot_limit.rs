@@ -1,14 +1,14 @@
-use rust_binance::{
-    spot::client::{SpotClient, SpotClientOption},
-    strategy::{Exchanger, Strategy},
-};
-
 use crate::database::{
     collection::{
         BinanceSecret, BinanceSpot, PersonIdentifier, PromiseLogging, PromiseLoggingInterface,
         PromiseProcessBinanceSpotLimit,
     },
     Database,
+};
+use rust_binance::{
+    noun::{Amount, Price, Quantity},
+    spot::client::{SpotClient, SpotClientOption},
+    strategy::{AmountPoint, Exchanger, QuantityPoint, Strategy},
 };
 
 use super::*;
@@ -17,18 +17,21 @@ impl Process for PromiseProcessBinanceSpotLimit {
     fn create(
         self,
         state: Arc<State>,
+        logger: Sender<(PromiseLoggingLevel, String)>,
         owner: PersonIdentifier,
         promise: PromiseIdentifier,
     ) -> ClosureFuture<()> {
         let item = Arc::new(self);
+
         let result = move || -> PinFuture<()> {
             let state = state.clone();
             let item = item.clone();
             let promise = promise.clone();
             let owner = owner.clone();
+            let logger = logger.clone();
             let process = async move {
                 let database = state.database();
-                let result = process(&state, &owner, &promise, &item).await;
+                let result = process(&state, &logger, &owner, &promise, &item).await;
 
                 database
                     .promise
@@ -71,6 +74,7 @@ impl Process for PromiseProcessBinanceSpotLimit {
 
 async fn process(
     state: &State,
+    logger: &Sender<(PromiseLoggingLevel, String)>,
     owner: &PersonIdentifier,
     _promise: &PromiseIdentifier,
     item: &PromiseProcessBinanceSpotLimit,
@@ -91,8 +95,8 @@ async fn process(
     );
     let client = Arc::new(client);
     let price = client.spawn_price();
-    let sell = client.spawn_sell();
-    let buy = client.spawn_buy();
+    let buy = point_expand_spawn_buy(client.spawn_buy(), logger.clone());
+    let sell = point_expand_spawn_sell(client.spawn_sell(), logger.clone());
 
     match item.limit.trap(&price, &buy, &sell).await {
         Err(e) => return Err(SchedulingError::Pursue(e.to_string())),
@@ -100,6 +104,72 @@ async fn process(
     }
 
     Ok(())
+}
+
+fn point_expand_spawn_buy<T>(
+    source: T,
+    logger: Sender<(PromiseLoggingLevel, String)>,
+) -> impl Fn(Price, Amount) -> PinFuture<Result<QuantityPoint, Box<dyn Error + Send + Sync>>>
+where
+    T: Fn(Price, Amount) -> PinFuture<Result<QuantityPoint, Box<dyn Error + Send + Sync>>>,
+{
+    move |price: Price, amount: Amount| {
+        let logger = logger.clone();
+        let source_future = source(price, amount);
+        let f = async move {
+            let result = source_future.await;
+
+            let logging = match &result {
+                Ok(v) => (PromiseLoggingLevel::Info, format!("buying {:?}", v)),
+                Err(e) => (
+                    PromiseLoggingLevel::Error,
+                    format!("buying error {}", e.to_string()),
+                ),
+            };
+
+            logger
+                .send_timeout(logging, Duration::from_secs(5))
+                .await
+                .unwrap();
+
+            result
+        };
+
+        Box::pin(f)
+    }
+}
+
+fn point_expand_spawn_sell<T>(
+    source: T,
+    logger: Sender<(PromiseLoggingLevel, String)>,
+) -> impl Fn(Price, Quantity) -> PinFuture<Result<AmountPoint, Box<dyn Error + Send + Sync>>>
+where
+    T: Fn(Price, Quantity) -> PinFuture<Result<AmountPoint, Box<dyn Error + Send + Sync>>>,
+{
+    move |price: Price, quantity: Quantity| {
+        let logger = logger.clone();
+        let source_future = source(price, quantity);
+        let f = async move {
+            let result = source_future.await;
+
+            let logging = match &result {
+                Ok(v) => (PromiseLoggingLevel::Info, format!("selling {:?}", v)),
+                Err(e) => (
+                    PromiseLoggingLevel::Error,
+                    format!("selling error {}", e.to_string()),
+                ),
+            };
+
+            logger
+                .send_timeout(logging, Duration::from_secs(5))
+                .await
+                .unwrap();
+
+            result
+        };
+
+        Box::pin(f)
+    }
 }
 
 async fn select_binance_secret_from_database(

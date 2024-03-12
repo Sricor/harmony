@@ -59,6 +59,9 @@ pub trait Interface {
     fn insert(&self, item: &Item)
         -> impl Future<Output = RecorderResult<()>> + Send;
 
+    fn insert_by_promise_owner_level_message(&self, promise: &PromiseIdentifier, owner: &PersonIdentifier, level:&PromiseLoggingLevel, message: &String)
+        -> impl Future<Output = RecorderResult<()>> + Send;
+    
     fn select_all(&self)
         -> impl Future<Output = RecorderResult<Vec<Item>>> + Send;
 
@@ -86,6 +89,28 @@ impl Interface for Recorder<Item> {
                 Ok(())
             }
             _ => Ok(()),
+        }
+    }
+
+    async fn insert_by_promise_owner_level_message(
+        &self,
+        promise: &PromiseIdentifier,
+        owner: &PersonIdentifier,
+        level: &PromiseLoggingLevel,
+        message: &String,
+    ) -> RecorderResult<()> {
+        match self {
+            Self::Sqlite(c) => {
+                let statement =
+                    "INSERT INTO PromiseLogging (promise, owner, level, message, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)";
+
+                let conn = c.lock()?;
+                let mut stmt = conn.prepare(statement)?;
+                stmt.execute((promise, owner, level, message, timestamp_millis()))?;
+
+                Ok(())
+            }
+            _ => todo!(),
         }
     }
 

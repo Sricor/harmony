@@ -26,6 +26,7 @@ pub mod collection {
     };
 
     pub use model::promise::logging::{
+        PromiseLoggingLevel,
         Item      as PromiseLogging,
         Interface as PromiseLoggingInterface
     };

@@ -8,7 +8,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use delay::task::{Task, TaskBuilder};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::mpsc::{self, error::SendError, Sender};
 
 use crate::api::State;
 use crate::database::collection::{
@@ -99,6 +99,12 @@ impl Display for SchedulingError {
 impl From<RecorderError> for SchedulingError {
     fn from(err: RecorderError) -> Self {
         Self::Database(err.to_string())
+    }
+}
+
+impl<T> From<SendError<T>> for SchedulingError {
+    fn from(err: SendError<T>) -> Self {
+        Self::Pursue(err.to_string())
     }
 }
 

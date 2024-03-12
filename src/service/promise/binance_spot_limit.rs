@@ -56,10 +56,6 @@ impl Process for PromiseProcessBinanceSpotLimit {
                             .await
                             .unwrap();
                     }
-
-                    let logging = PromiseLogging::with_error(promise, owner.clone(), e.to_string());
-
-                    database.promise_logging.insert(&logging).await.unwrap();
                 }
             };
 
@@ -79,7 +75,6 @@ async fn process(
 ) -> SchedulingResult<()> {
     let database = state.database();
     let symbol = &item.symbol;
-
 
     let secret = select_binance_secret_from_database(database, logger, &owner).await?;
     let spot = select_binance_spot_from_database(database, logger, &owner, symbol).await?;
@@ -136,7 +131,6 @@ where
         Box::pin(f)
     }
 }
-
 
 fn point_expand_spawn_buy<T>(
     source: T,

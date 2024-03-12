@@ -1496,7 +1496,7 @@ dependencies = [
 [[package]]
 name = "rust_binance"
 version = "0.1.0"
-source = "git+https://github.com/Sricor/binance.git#2fab244b9694be89bec5df01e32da53be9bda5e9"
+source = "git+https://github.com/Sricor/binance.git#dc0efeec618353c19034e3c7345671d3525f8c66"
 dependencies = [
  "binance-rs-async",
  "chrono",

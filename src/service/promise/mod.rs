@@ -8,11 +8,13 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use delay::task::{Task, TaskBuilder};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::{self, error::SendError, Sender};
 
 use crate::api::State;
 use crate::database::collection::{
-    PersonIdentifier, Promise, PromiseIdentifier, PromiseInterface, PromiseProcessBinanceSpotLimit,
-    PromiseProcessCategory, PromiseProcessStatus,
+    PersonIdentifier, Promise, PromiseIdentifier, PromiseInterface, PromiseLoggingInterface,
+    PromiseLoggingLevel, PromiseProcessBinanceSpotLimit, PromiseProcessCategory,
+    PromiseProcessStatus,
 };
 use crate::database::error::RecorderError;
 
@@ -30,14 +32,29 @@ impl Scheduling for Promise {
     where
         T: Process + Serialize + for<'a> Deserialize<'a>,
     {
+        let identifier = self.identifier.clone();
+        let owner = self.owner.clone();
         let process = self.process::<T>()?;
+
+        let (tx, mut rx) = mpsc::channel::<(PromiseLoggingLevel, String)>(8);
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            while let Some(v) = rx.recv().await {
+                state_clone
+                    .database()
+                    .promise_logging
+                    .insert_by_promise_owner_level_message(&identifier, &owner, &v.0, &v.1)
+                    .await
+                    .unwrap();
+            }
+        });
 
         let result = TaskBuilder::default()
             .set_identifier(self.identifier.clone())
             .set_interval(Duration::from_secs(self.interval))
             .set_timeout(Duration::from_secs(self.timeout))
             .set_max_concurrent(self.max_concurrent)
-            .set_process(process.create(state, self.owner, self.identifier))
+            .set_process(process.create(state, tx, self.owner, self.identifier))
             .build();
 
         Ok(Arc::new(result))
@@ -48,6 +65,7 @@ pub trait Process {
     fn create(
         self,
         state: Arc<State>,
+        logger: Sender<(PromiseLoggingLevel, String)>,
         owner: PersonIdentifier,
         promise: PromiseIdentifier,
     ) -> ClosureFuture<()>;
@@ -81,6 +99,12 @@ impl Display for SchedulingError {
 impl From<RecorderError> for SchedulingError {
     fn from(err: RecorderError) -> Self {
         Self::Database(err.to_string())
+    }
+}
+
+impl<T> From<SendError<T>> for SchedulingError {
+    fn from(err: SendError<T>) -> Self {
+        Self::Pursue(err.to_string())
     }
 }
 
